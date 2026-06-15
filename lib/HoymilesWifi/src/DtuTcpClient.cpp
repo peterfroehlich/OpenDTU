@@ -749,7 +749,8 @@ void DtuTcpClient::_readRespGetConfig(const uint8_t* payload, size_t len)
         return;
     }
 
-    _data.powerLimit = static_cast<uint8_t>(resp.limit_power_mypower);
+    // limit_power_mypower is in percent×10 units (0–1000); convert to 0–100.
+    _data.powerLimit = static_cast<uint8_t>(resp.limit_power_mypower / 10);
     ESP_LOGD(TAG, "Power limit: %u%%", _data.powerLimit);
 }
 
