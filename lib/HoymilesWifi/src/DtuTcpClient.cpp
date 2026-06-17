@@ -649,6 +649,8 @@ void DtuTcpClient::_readRespAppInfo(const uint8_t* payload, size_t len)
         _data.invFwVersion  = static_cast<uint32_t>(pvInfo.pv_sw_version);
         _data.invHwPartNum  = static_cast<uint32_t>(pvInfo.pv_hw_pn);
         _data.invHwVersion  = static_cast<uint16_t>(pvInfo.pv_hw_version);
+        _data.invGpfCode    = pvInfo.pv_gpf_code;
+        _data.invGpf        = pvInfo.pv_gpf;
 
         // Derive model name from the inverter serial (following dtuGateway convention).
         // Uses range-based detection: b0=high byte, b1=low byte of prefix.

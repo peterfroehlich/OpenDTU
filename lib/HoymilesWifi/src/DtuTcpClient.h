@@ -90,6 +90,8 @@ struct DtuData_t {
     uint32_t invFwVersion  = 0;
     uint32_t invHwPartNum  = 0;     // HW part number (from pv_hw_pn)
     uint16_t invHwVersion  = 0;     // HW version (from pv_hw_version)
+    int32_t  invGpfCode    = 0;     // grid profile type ID (pv_gpf_code, field 7)
+    int32_t  invGpf        = 0;     // grid profile version (pv_gpf, field 8)
 
     // Alarm / event log entries (from WInfoReqDTO)
     static const uint8_t MAX_ALARM_ENTRIES = 15;
