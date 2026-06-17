@@ -255,6 +255,9 @@ void DtuTcpClient::_onConnect(void* arg, AsyncClient* /*c*/)
     self->_connState   = DTU_CONN_CONNECTED;
     self->_connRetries = 0;
     if (self->_connectCallback) self->_connectCallback(true);
+    // Start the first request immediately — don't wait up to DTU_LOOP_SEC for
+    // the next ticker fire, or the effective poll cycle becomes 3× longer.
+    self->_loop();
 }
 
 void DtuTcpClient::_onDisconnect(void* arg, AsyncClient* /*c*/)
@@ -302,6 +305,8 @@ void DtuTcpClient::_onData(void* arg, AsyncClient* /*c*/, void* data, size_t len
     switch (self->_txrxState) {
         case TXRX_WAIT_APP_INFO:
             self->_readRespAppInfo(payload, pbLen);
+            // Immediately start the data poll — don't wait for the next loop tick.
+            self->_writeReqRealData();
             break;
 
         case TXRX_WAIT_REALDATA:
