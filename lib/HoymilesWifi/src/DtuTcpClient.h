@@ -17,7 +17,8 @@
 // Protocol constants
 #define DTU_TCP_PORT          10081
 #define DTU_TIME_OFFSET       28800   // 8-hour offset used by DTU firmware
-#define DTU_LOOP_SEC          5
+#define DTU_LOOP_SEC          5    // Ticker interval; how often _loop() runs to check for work
+#define DTU_WIFI_POLL_SEC     30   // Minimum seconds between full data polls
 #define DTU_TXRX_TIMEOUT_MS   30000
 #define DTU_RECONNECT_MAX     5
 #define DTU_RECONNECT_PAUSE_MS 60000

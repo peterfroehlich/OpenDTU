@@ -170,7 +170,7 @@ void DtuTcpClient::_loop()
         // Connect only when there is actual work pending.
         bool hasPendingCmds = _pendingLimit || _pendingPower || _pendingRestart;
         bool pollDue = (millis() - _lastPollCompletedAt) >=
-                       static_cast<unsigned long>(DTU_LOOP_SEC) * 1000UL;
+                       static_cast<unsigned long>(DTU_WIFI_POLL_SEC) * 1000UL;
 
         if (!hasPendingCmds && !pollDue) {
             return; // idle between polls — stay disconnected
