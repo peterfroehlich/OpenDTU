@@ -30,6 +30,20 @@ void InverterSettingsClass::init(Scheduler& scheduler)
     ESP_LOGI(TAG, "Initialize Hoymiles interface...");
     Hoymiles.init();
 
+    // Allow a radio-less setup when at least one WiFi inverter is configured
+    // (WiFi inverters talk TCP, not NRF24/CMT2300).
+    bool hasWifiInverter = false;
+    for (uint8_t i = 0; i < INV_MAX_COUNT; i++) {
+        if (config.Inverter[i].Serial != 0 && config.Inverter[i].DtuIpAddress[0] != '\0') {
+            hasWifiInverter = true;
+            break;
+        }
+    }
+    if (!PinMapping.isValidNrf24Config() && !PinMapping.isValidCmt2300Config() && !hasWifiInverter) {
+        ESP_LOGE(TAG, "Invalid pin config");
+        return;
+    }
+
     // Initialize NRF24 if configured
     if (PinMapping.isValidNrf24Config()) {
         ESP_LOGI(TAG, "NRF: Initialize communication");

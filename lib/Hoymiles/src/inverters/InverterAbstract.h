@@ -96,6 +96,7 @@ public:
     // deferred data callbacks (avoids blocking the async_tcp FreeRTOS task).
     virtual void tick() {}
 
+
     virtual bool sendStatsRequest() = 0;
     virtual bool sendAlarmLogRequest(const bool force = false) = 0;
     virtual bool sendDevInfoRequest() = 0;

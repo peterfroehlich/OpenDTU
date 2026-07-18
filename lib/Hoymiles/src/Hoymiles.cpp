@@ -62,7 +62,7 @@ void HoymilesClass::loop()
     static uint8_t inverterPos = 0;
 
     std::shared_ptr<InverterAbstract> iv = getInverterByPos(inverterPos);
-    if ((iv == nullptr) || (iv->isWifiInverter()) || (!iv->getRadio()->isInitialized())) {
+    if ((iv == nullptr) || (iv->isWifiInverter()) || ((iv != nullptr) && (!iv->getRadio()->isInitialized()))) {
         if (++inverterPos >= getNumInverters()) {
             inverterPos = 0;
         }
