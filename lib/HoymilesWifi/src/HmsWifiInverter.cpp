@@ -370,8 +370,29 @@ void HmsWifiInverter::_populateDevInfo(const DtuData_t& d)
     di->appendFragmentSimple(0, simpleBuf, sizeof(simpleBuf));
     di->setLastUpdateSimple(millis());
 
-    ESP_LOGI(TAG, "DevInfo populated: model=%s pvCount=%u invFW=%u HW_PN=0x%08X dtuFW=%u",
-             d.inverterModel.c_str(), _pvCount, d.invFwVersion, d.invHwPartNum, d.dtuFwVersion);
+    // Grid profile — pv_gpf_code and pv_gpf are available from the AppInfo
+    // response (APPPvInfoMO fields 7 & 8). Byte layout mirrors the RF
+    // GridOnProFilePara payload so GridProfileParser can identify the profile:
+    //   [0] lIdx  = (gpf_code >> 8) & 0xFF
+    //   [1] hIdx  = gpf_code & 0xFF
+    //   [2] version byte  = (gpf >> 8) & 0xFF  (high nibble = major)
+    //   [3] version sub   = gpf & 0xFF
+    // 7 bytes total — 0xFF sentinel at [4] makes getProfile() return empty
+    // (detailed section values are not available via WiFi protocol).
+    if (d.invGpfCode != 0) {
+        uint8_t gpBuf[7] = { 0, 0, 0, 0, 0xFF, 0, 0 };
+        gpBuf[0] = static_cast<uint8_t>((d.invGpfCode >> 8) & 0xFF);
+        gpBuf[1] = static_cast<uint8_t>(d.invGpfCode & 0xFF);
+        gpBuf[2] = static_cast<uint8_t>((d.invGpf >> 8) & 0xFF);
+        gpBuf[3] = static_cast<uint8_t>(d.invGpf & 0xFF);
+        GridProfile()->clearBuffer();
+        GridProfile()->appendFragment(0, gpBuf, sizeof(gpBuf));
+        GridProfile()->setLastUpdate(millis());
+    }
+
+    ESP_LOGI(TAG, "DevInfo populated: model=%s pvCount=%u invFW=%u HW_PN=0x%08X dtuFW=%u gpf=0x%04X/0x%04X",
+             d.inverterModel.c_str(), _pvCount, d.invFwVersion, d.invHwPartNum, d.dtuFwVersion,
+             static_cast<uint32_t>(d.invGpfCode), static_cast<uint32_t>(d.invGpf));
 }
 
 // ---------------------------------------------------------------------------

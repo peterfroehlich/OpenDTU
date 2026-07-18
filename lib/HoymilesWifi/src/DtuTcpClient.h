@@ -17,8 +17,8 @@
 // Protocol constants
 #define DTU_TCP_PORT          10081
 #define DTU_TIME_OFFSET       28800   // 8-hour offset used by DTU firmware
-#define DTU_KEEPALIVE_SEC     10
-#define DTU_LOOP_SEC          5
+#define DTU_LOOP_SEC          5    // Ticker interval; how often _loop() runs to check for work
+#define DTU_WIFI_POLL_SEC     30   // Minimum seconds between full data polls
 #define DTU_TXRX_TIMEOUT_MS   30000
 #define DTU_RECONNECT_MAX     5
 #define DTU_RECONNECT_PAUSE_MS 60000
@@ -91,6 +91,8 @@ struct DtuData_t {
     uint32_t invFwVersion  = 0;
     uint32_t invHwPartNum  = 0;     // HW part number (from pv_hw_pn)
     uint16_t invHwVersion  = 0;     // HW version (from pv_hw_version)
+    int32_t  invGpfCode    = 0;     // grid profile type ID (pv_gpf_code, field 7)
+    int32_t  invGpf        = 0;     // grid profile version (pv_gpf, field 8)
 
     // Alarm / event log entries (from WInfoReqDTO)
     static const uint8_t MAX_ALARM_ENTRIES = 15;
@@ -135,13 +137,11 @@ private:
     static void _onData      (void* arg, AsyncClient* c, void* data, size_t len);
 
     // Timer callbacks
-    static void _loopCb     (DtuTcpClient* self);
-    static void _keepAliveCb(DtuTcpClient* self);
+    static void _loopCb(DtuTcpClient* self);
 
     // Internal connection management
     void _connect();
     void _disconnect();
-    void _keepAlive();
     void _loop();
 
     // TX/RX state observer (timeout detection)
@@ -180,7 +180,6 @@ private:
 
     // Timers
     Ticker _loopTimer;
-    Ticker _keepAliveTimer;
 
     // State
     DtuConnState_t  _connState  = DTU_CONN_OFFLINE;
@@ -204,6 +203,12 @@ private:
     DtuData_t _data;
     // Set by async_tcp task; cleared + callback fired by main task via tick().
     std::atomic<bool> _dataReady { false };
+    // Set by async_tcp task when a full poll cycle completes; tick() closes the connection.
+    std::atomic<bool> _pendingDisconnect { false };
+    // Set by tick() before closing; suppresses the failure callback in _onDisconnect.
+    std::atomic<bool> _plannedDisconnect { false };
+    // Timestamp of last successful poll completion (set by tick()).
+    unsigned long _lastPollCompletedAt = 0;
 
     DataCallback    _dataCallback;
     ConnectCallback _connectCallback;

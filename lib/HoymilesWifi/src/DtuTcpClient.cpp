@@ -85,7 +85,6 @@ void DtuTcpClient::setup(const char* host)
 void DtuTcpClient::teardown()
 {
     _loopTimer.detach();
-    _keepAliveTimer.detach();
 
     if (_client) {
         if (_client->connected()) {
@@ -107,10 +106,25 @@ bool DtuTcpClient::isConnected() const
 
 void DtuTcpClient::tick()
 {
+    // Deliver data before disconnecting so stats are already fresh when the
+    // connection-closed event fires (avoids a spurious failure-count increment).
     if (_dataReady.load(std::memory_order_acquire) && _dataCallback) {
         _dataReady.store(false, std::memory_order_relaxed);
         ESP_LOGI(TAG, "tick: delivering data to inverter (AC %.1f W)", _data.gridPower);
         _dataCallback(_data);
+    }
+
+    // Planned disconnect after a completed poll cycle.
+    if (_pendingDisconnect.exchange(false, std::memory_order_acq_rel)) {
+        _lastPollCompletedAt = millis();
+        _connRetries = 0;
+        _connState   = DTU_CONN_OFFLINE;
+        _txrxState   = TXRX_IDLE;
+        // Tell _onDisconnect not to fire the failure callback.
+        _plannedDisconnect.store(true, std::memory_order_release);
+        if (_client && _client->connected()) {
+            _client->close();
+        }
     }
 }
 
@@ -139,11 +153,6 @@ void DtuTcpClient::_loopCb(DtuTcpClient* self)
     if (self) self->_loop();
 }
 
-void DtuTcpClient::_keepAliveCb(DtuTcpClient* self)
-{
-    if (self) self->_keepAlive();
-}
-
 // ---------------------------------------------------------------------------
 // Internal loop (called every DTU_LOOP_SEC seconds by Ticker)
 // ---------------------------------------------------------------------------
@@ -152,11 +161,20 @@ void DtuTcpClient::_loop()
     _txrxObserver();
 
     if (_connState == DTU_CONN_OFFLINE || _connState == DTU_CONN_ERROR) {
-        // Respect pause after retry burst
+        // Respect pause after a retry burst caused by connection errors.
         if (_pauseUntil > 0 && millis() < _pauseUntil) {
             return;
         }
         _pauseUntil = 0;
+
+        // Connect only when there is actual work pending.
+        bool hasPendingCmds = _pendingLimit || _pendingPower || _pendingRestart;
+        bool pollDue = (millis() - _lastPollCompletedAt) >=
+                       static_cast<unsigned long>(DTU_WIFI_POLL_SEC) * 1000UL;
+
+        if (!hasPendingCmds && !pollDue) {
+            return; // idle between polls — stay disconnected
+        }
 
         if (_connRetries < DTU_RECONNECT_MAX) {
             _connRetries++;
@@ -201,11 +219,11 @@ void DtuTcpClient::_loop()
         return;
     }
 
-    // --- Periodic device info request (non-blocking: real data polls on next tick) ---
-    // First request fires after DTU_APPINFO_INTERVAL_MS has elapsed since boot or last request.
-    // On initial connect _lastAppInfoAt == 0 so this triggers after the interval has passed.
+    // --- Periodic device info request ---
+    // Fire immediately if we've never received AppInfo this session (first connect
+    // after boot or after an unexpected disconnect), or after the refresh interval.
     unsigned long now = millis();
-    if (now - _lastAppInfoAt > DTU_APPINFO_INTERVAL_MS) {
+    if (!_appInfoReceived || (now - _lastAppInfoAt > DTU_APPINFO_INTERVAL_MS)) {
         _writeReqAppInfo();
         _lastAppInfoAt = now;
         return;
@@ -234,23 +252,30 @@ void DtuTcpClient::_onConnect(void* arg, AsyncClient* /*c*/)
 {
     auto* self = static_cast<DtuTcpClient*>(arg);
     ESP_LOGI(TAG, "Connected to DTU");
-    self->_connState  = DTU_CONN_CONNECTED;
+    self->_connState   = DTU_CONN_CONNECTED;
     self->_connRetries = 0;
-    // Schedule first app info request ~8 s after connect
-    self->_lastAppInfoAt = millis() - DTU_APPINFO_INTERVAL_MS + 8000UL;
-    self->_keepAliveTimer.attach(DTU_KEEPALIVE_SEC, _keepAliveCb, self);
     if (self->_connectCallback) self->_connectCallback(true);
+    // Start the first request immediately — don't wait up to DTU_LOOP_SEC for
+    // the next ticker fire, or the effective poll cycle becomes 3× longer.
+    self->_loop();
 }
 
 void DtuTcpClient::_onDisconnect(void* arg, AsyncClient* /*c*/)
 {
     auto* self = static_cast<DtuTcpClient*>(arg);
-    ESP_LOGI(TAG, "Disconnected from DTU");
     self->_connState = DTU_CONN_OFFLINE;
     self->_txrxState = TXRX_IDLE;
-    self->_keepAliveTimer.detach();
-    self->_appInfoReceived = false;
-    if (self->_connectCallback) self->_connectCallback(false);
+
+    if (self->_plannedDisconnect.exchange(false, std::memory_order_acq_rel)) {
+        // Intentional disconnect after a completed poll cycle — don't report a failure
+        // and keep _appInfoReceived so the next session skips the AppInfo request.
+        ESP_LOGI(TAG, "Disconnected from DTU (planned)");
+    } else {
+        // Unexpected disconnect — reset AppInfo so the next session re-fetches it.
+        self->_appInfoReceived = false;
+        ESP_LOGI(TAG, "Disconnected from DTU");
+        if (self->_connectCallback) self->_connectCallback(false);
+    }
 }
 
 void DtuTcpClient::_onError(void* arg, AsyncClient* c, int8_t error)
@@ -280,6 +305,8 @@ void DtuTcpClient::_onData(void* arg, AsyncClient* /*c*/, void* data, size_t len
     switch (self->_txrxState) {
         case TXRX_WAIT_APP_INFO:
             self->_readRespAppInfo(payload, pbLen);
+            // Immediately start the data poll — don't wait for the next loop tick.
+            self->_writeReqRealData();
             break;
 
         case TXRX_WAIT_REALDATA:
@@ -302,8 +329,7 @@ void DtuTcpClient::_onData(void* arg, AsyncClient* /*c*/, void* data, size_t len
 
         case TXRX_WAIT_GET_ALARMS:
             self->_readRespGetAlarms(payload, pbLen);
-            // Polling cycle complete — signal the main task to deliver data
-            self->_dataReady.store(true, std::memory_order_release);
+            // _readRespGetAlarms sets _dataReady and _pendingDisconnect.
             break;
 
         case TXRX_WAIT_CMD_SET_LIMIT:
@@ -350,17 +376,8 @@ void DtuTcpClient::_disconnect()
         _client->close();
     }
     _connState = DTU_CONN_OFFLINE;
-    _keepAliveTimer.detach();
     _appInfoReceived = false;
     if (_connectCallback) _connectCallback(false);
-}
-
-void DtuTcpClient::_keepAlive()
-{
-    if (_client && _client->connected()) {
-        const char null = '\0';
-        _client->write(&null, 1);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +649,8 @@ void DtuTcpClient::_readRespAppInfo(const uint8_t* payload, size_t len)
         _data.invFwVersion  = static_cast<uint32_t>(pvInfo.pv_sw_version);
         _data.invHwPartNum  = static_cast<uint32_t>(pvInfo.pv_hw_pn);
         _data.invHwVersion  = static_cast<uint16_t>(pvInfo.pv_hw_version);
+        _data.invGpfCode    = pvInfo.pv_gpf_code;
+        _data.invGpf        = pvInfo.pv_gpf;
 
         // Derive model name from the inverter serial (following dtuGateway convention).
         // Uses range-based detection: b0=high byte, b1=low byte of prefix.
@@ -748,6 +767,7 @@ void DtuTcpClient::_readRespGetConfig(const uint8_t* payload, size_t len)
         ESP_LOGW(TAG, "readRespGetConfig: decode failed");
         return;
     }
+
     // limit_power_mypower is in percent×10 units (0–1000); convert to 0–100.
     _data.powerLimit = static_cast<uint8_t>(resp.limit_power_mypower / 10);
     ESP_LOGD(TAG, "Power limit: %u%%", _data.powerLimit);
@@ -800,5 +820,10 @@ void DtuTcpClient::_readRespGetAlarms(const uint8_t* payload, size_t len)
     }
 
     ESP_LOGI(TAG, "Alarms: %u entries", _data.alarmCount);
-    delete resp;
+    free(resp);
+
+    // Signal the main task to deliver data and then close the connection.
+    // Staying connected between polls caused the DTU to reset the connection.
+    _dataReady.store(true, std::memory_order_release);
+    _pendingDisconnect.store(true, std::memory_order_release);
 }
