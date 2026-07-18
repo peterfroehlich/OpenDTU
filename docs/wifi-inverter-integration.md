@@ -10,7 +10,7 @@
 
 OpenDTU currently communicates with Hoymiles micro-inverters exclusively via RF radio (NRF24 at 2.4 GHz and CMT2300 at ~865 MHz). Newer Hoymiles models in the **HMS-xxxW-2T** series (e.g. HMS-800W-2T) ship with an integrated WiFi DTU rather than relying on a separate RF module. These inverters are not supported by OpenDTU's existing radio stack.
 
-The [dtuGateway](https://github.com/tobiasw91/dtuGateway) project has reverse-engineered the proprietary TCP/protobuf protocol these inverters use and provides a working implementation on ESP32/ESP8266. The goal of this integration is to port that communication layer into OpenDTU so that WiFi-based HMS inverters can be configured and monitored through OpenDTU's existing web interface, MQTT stack, and Home Assistant discovery — without maintaining a separate gateway device.
+The [dtuGateway](https://github.com/ohAnd/dtuGateway) project has reverse-engineered the proprietary TCP/protobuf protocol these inverters use and provides a working implementation on ESP32/ESP8266. The goal of this integration is to port that communication layer into OpenDTU so that WiFi-based HMS inverters can be configured and monitored through OpenDTU's existing web interface, MQTT stack, and Home Assistant discovery — without maintaining a separate gateway device.
 
 ---
 
